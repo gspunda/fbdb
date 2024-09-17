@@ -5,11 +5,11 @@ import sys
 from bs4 import BeautifulSoup
 
 #Checks if the record scraped from the url is present in the database.
-def check_record(round):
+def check_record(round, tname):
     db = db_connect()
     c = db.cursor()
     c.execute("USE fbdb")
-    statement = "SELECT COUNT(*) FROM matches WHERE round = %s"
+    statement = f"SELECT COUNT(*) FROM {tname} WHERE round = %s"
     c.execute(statement, (round,))
     result = c.fetchone()
     if result[0] > 0: c.close(); db.close(); return True;
@@ -19,12 +19,13 @@ def check_record(round):
 
 #Inserts details into database after checkinf if the the records already exist.
 def insert_match_info(score, round, home, away, _date):
-    check = check_record(round)
+    tname = sys.argv[2]
+    check = check_record(round, tname)
     db = db_connect()
     c = db.cursor()
     if check == False: #If record doesn't exist, it inserts it.
         score_h, score_a = map(int, score.split("-"))
-        statement = "INSERT INTO matches (date, round, team_home, team_away, home_score, away_score) VALUES (%s, %s, %s, %s, %s, %s)"
+        statement = f"INSERT INTO {tname} (date, round, team_home, team_away, home_score, away_score) VALUES (%s, %s, %s, %s, %s, %s)"
         c.execute("USE fbdb")
         c.execute(statement, (_date, round, home, away, score_h, score_a))
         db.commit()
@@ -48,9 +49,23 @@ def extract_match_info(a_class_mecze, td_tags):
         match_score, match_round, home_team, away_team, match_date)
         tag_iterator += 5 #Incerements to the next table row in the url.
 
-#Extracts scores of the team provided in the url
+
+#Exracts url from database, which leads to the teams matches.
+def fetch_url():
+    tname = sys.argv[2]
+    db = db_connect()
+    c = db.cursor()
+    c.execute("USE fbdb")
+    statement = "SELECT url FROM teams WHERE name = %s"
+    c.execute(statement, (tname, ))
+    url = str(c.fetchall())
+    url = url.split("'")[1::2]
+    return url[0]
+
+#Extracts scores of the team provided as an argument.
 #Also provides links to every match for further scraping.
-def fetch_match(url):
+def fetch_match():
+    url = fetch_url()
     page = requests.get(url)
     doc = BeautifulSoup(page.text, "html.parser")
     a_class_mecze = doc.find_all("a", class_ = "mecze2")
@@ -67,7 +82,6 @@ def display_table(table):
     results = c.fetchall()
     for row in results:
         print(row)
-
     c.close()
     db.close()
 
@@ -109,19 +123,15 @@ def db_create():
     except mysql.connector.Error as e:
         print("Error connecting to the MySQL: ", e)
 
-def update_db():
-    pass
-
 #Is called when script is executed with the -at --addteam flag.
 def add_team():
         table_name = sys.argv[2]
-
         db = db_connect()
         c = db.cursor()
         mysql_statements = [
         "USE fbdb",
         "INSERT INTO teams (name, url) VALUES (%s, %s)",
-        "CREATE TABLE IF NOT EXISTS '{}' (id INT AUTO_INCREMENT PRIMARY KEY, date VARCHAR(255), round VARCHAR(255), team_home VARCHAR(255), team_away VARCHAR(255), home_score INT, away_score INT)"]
+        "CREATE TABLE IF NOT EXISTS {} (id INT AUTO_INCREMENT PRIMARY KEY, date VARCHAR(255), round VARCHAR(255), team_home VARCHAR(255), team_away VARCHAR(255), home_score INT, away_score INT)"]
         create_table_query = mysql_statements[2].format(table_name)
         c.execute(mysql_statements[0])
         c.execute(mysql_statements[1], (sys.argv[2], sys.argv[3]))
@@ -131,17 +141,15 @@ def add_team():
         c.close()
         db.close()
 
-#Displays help with explanation of the stript's functions.
-def display_help():
-    print("Help!")
-
 #Displays teams which are present in the database.
 def show_teams():
-    print("show teams!")
+        table_name = "teams"
+        display_table(table_name)
 
 #Displays all the matches of the chosen team.
 def show_matches():
-    print("show matches!")
+        table_name = sys.argv[2]
+        display_table(table_name)
 
 #Checks if the number of arguments.
 #Returns False is it's lower then provided number.
@@ -151,27 +159,54 @@ def check_argvs(l):
 
 #Deletes the team provided as an argument.
 def delete_team():
-    pass
+    tname = sys.argv[2]
+    db = db_connect()
+    c = db.cursor()
+    mysql_statements = [
+        "USE fbdb",
+        "DELETE FROM teams WHERE name = %s",
+        f"DROP TABLE IF EXISTS {tname}"]
+    c.execute(mysql_statements[0])
+    c.execute(mysql_statements[1], (tname,))
+    c.execute(mysql_statements[2])
+    db.commit()
+    c.close()
+    db.close()
+
+#Displays basic help.
+def display_help():
+    print("Start a program with -c or--create parameter in order to create the new Database for the program. If it doesn't already exists\n")
+
+    print("Start a program with -st or --showteams parameter in order to display the teams added to the program.\n")
+
+    print("Start a program with -at or --addteams parameter and the name of the team as a second parameter and url to the team's matches page from 90minut.pl, in order to add a team to the database.")
+    print("IMPORTANT: Validity of the url is crucial for the program to properly collect the data. Below is the example url for the matches: \nhttp://www.90minut.pl/mecze_druzyna.php?id=26775&id_sezon=105")
+    print("Also make sure to put the url in quotation marks.\n")
+
+
+    print("Start a program with -u or --update parameter and name of the team, which is already in the database, in order to collect matches data from the 90minut.pl.\n")
+
+    print("Start a program with -sm or --showmatches parameter and name of the team, which is already in the database, in order to show team's played matches.\n")
+
+    print("Start a program with -dt or --deleteteam parameter and name of the team, which is already in the database, in order to dlete this team from the database.\n")
 
 #Main function, acts on the input given when executing the script.
 def main():
-    message = "No arguments! Please execute the script with the -h or --help argument for help."
-    if check_argvs(2) == False: print(message)
+    message = "No arguments! Please execute the script with the -h or --help parameter for help!"
+    if check_argvs(2) == False: print(message); return;
     if sys.argv[1] == ("-h" or "--help"): display_help(); return;
     if sys.argv[1] == ("-c" or "--create"): db_create(); return;
     if sys.argv[1] == ("-st" or "--showteams"): show_teams(); return;
     if sys.argv[1] == ("-at" or "--addteam") and (check_argvs(4) == True):
         add_team(); return;
     if sys.argv[1] == ("-u" or "--update") and (check_argvs(3) == True):
-        update_db(); return;
+        fetch_match(); return;
     if sys.argv[1] == ("-sm" or "--showmatches") and (check_argvs(3) == True):
         show_matches(); return;
     if sys.argv[1] == ("-dt" or "--deleteteam") and (check_argvs(3) == True):
-        show_matches(); return;
-
-
-
+        delete_team(); return;
 
 if __name__ == '__main__':
-    # fetch_match("http://www.90minut.pl/mecze_druzyna.php?id=26775&id_sezon=105")
+    # fetch_match(http://www.90minut.pl/mecze_druzyna.php?id=26775&id_sezon=105)
+    # main()
     main()
